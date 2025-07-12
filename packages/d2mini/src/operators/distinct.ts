@@ -14,7 +14,7 @@ type Multiplicity = number
  */
 export class DistinctOperator<T> extends UnaryOperator<T> {
   #by: (value: T) => any
-  #values: Map<any, Multiplicity> // keeps track of the number of times each distinct value has been seen
+  #values: Map<string, { multiplicity: Multiplicity, value: T }> // keeps track of the number of times each distinct value has been seen
 
   constructor(
     id: number,
@@ -28,16 +28,17 @@ export class DistinctOperator<T> extends UnaryOperator<T> {
   }
 
   run(): void {
-    const updatedValues = new Map<any, [Multiplicity, T]>()
+    const updatedValues = new Map<string, [Multiplicity, T]>()
 
     // Compute the new multiplicity for each value
     for (const message of this.inputMessages()) {
       for (const [value, diff] of message.getInner()) {
-        const distinctKey = this.#by(value)
+        const distinctValue = this.#by(value)
+        const distinctKey = JSON.stringify(distinctValue)
 
         const oldMultiplicity =
           updatedValues.get(distinctKey)?.[0] ??
-          this.#values.get(distinctKey) ??
+          this.#values.get(distinctKey)?.multiplicity ??
           0
         const newMultiplicity = oldMultiplicity + diff
 
@@ -52,12 +53,12 @@ export class DistinctOperator<T> extends UnaryOperator<T> {
       distinctKey,
       [newMultiplicity, value],
     ] of updatedValues.entries()) {
-      const oldMultiplicity = this.#values.get(distinctKey) ?? 0
+      const oldMultiplicity = this.#values.get(distinctKey)?.multiplicity ?? 0
 
       if (newMultiplicity === 0) {
         this.#values.delete(distinctKey)
       } else {
-        this.#values.set(distinctKey, newMultiplicity)
+        this.#values.set(distinctKey, { multiplicity: newMultiplicity, value })
       }
 
       if (oldMultiplicity <= 0 && newMultiplicity > 0) {
