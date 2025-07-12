@@ -3,6 +3,7 @@ import { D2 } from '../../src/d2.js'
 import { MultiSet } from '../../src/multiset.js'
 import { reduce } from '../../src/operators/reduce.js'
 import { output } from '../../src/operators/output.js'
+import { KeyedMessageTracker, assertKeyedResults, assertOnlyKeysAffected } from '../test-utils.js'
 
 describe('Operators', () => {
   describe('Reduce operation', () => {
@@ -89,7 +90,7 @@ describe('Operators', () => {
     test('multiple incremental updates to same key', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -100,7 +101,7 @@ describe('Operators', () => {
           return [[sum, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -115,6 +116,20 @@ describe('Operators', () => {
       )
       graph.run()
 
+      const firstResult = tracker.getResult()
+      assertOnlyKeysAffected('reduce first update', firstResult.messages, ['a', 'b'])
+      assertKeyedResults(
+        'reduce first update',
+        firstResult,
+        [
+          ['a', 1],
+          ['b', 2],
+        ],
+        4 // Expected message count
+      )
+
+      tracker.reset()
+
       // Second update: add more to a, modify b
       input.sendData(
         new MultiSet([
@@ -124,31 +139,35 @@ describe('Operators', () => {
       )
       graph.run()
 
-      // Third update: remove some from a
+      const secondResult = tracker.getResult()
+      assertOnlyKeysAffected('reduce second update', secondResult.messages, ['a', 'b'])
+      assertKeyedResults(
+        'reduce second update',
+        secondResult,
+        [
+          ['a', 4], // 1+3
+          ['b', 6], // 2+4
+        ],
+        6 // Expected message count (old removed, new added for both keys)
+      )
+
+      tracker.reset()
+
+      // Third update: remove some from a only
       input.sendData(new MultiSet([[['a', 1], -1]]))
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
-        // First update: a=1, b=2
+      const thirdResult = tracker.getResult()
+      // Only key 'a' should be affected, not 'b'
+      assertOnlyKeysAffected('reduce third update', thirdResult.messages, ['a'])
+      assertKeyedResults(
+        'reduce third update',
+        thirdResult,
         [
-          [['a', 1], 1],
-          [['b', 2], 1],
+          ['a', 3], // 4-1=3
         ],
-        // Second update: old values removed, new values added
-        [
-          [['a', 1], -1], // Remove old sum for a
-          [['a', 4], 1], // Add new sum for a (1+3)
-          [['b', 2], -1], // Remove old sum for b
-          [['b', 6], 1], // Add new sum for b (2+4)
-        ],
-        // Third update: remove a=1, so new sum is just 3
-        [
-          [['a', 4], -1], // Remove old sum for a
-          [['a', 3], 1], // Add new sum for a (just 3 now)
-        ],
-      ])
+        3 // Expected message count (old removed, new added for key a)
+      )
     })
 
     test('updates that cancel out completely', () => {

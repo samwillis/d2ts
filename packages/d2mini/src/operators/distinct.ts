@@ -6,6 +6,7 @@ import {
 } from '../graph.js'
 import { StreamBuilder } from '../d2.js'
 import { MultiSet } from '../multiset.js'
+import { hash } from '../utils.js'
 
 type Multiplicity = number
 
@@ -34,7 +35,7 @@ export class DistinctOperator<T> extends UnaryOperator<T> {
     for (const message of this.inputMessages()) {
       for (const [value, diff] of message.getInner()) {
         const distinctValue = this.#by(value)
-        const distinctKey = JSON.stringify(distinctValue)
+        const distinctKey = hash(distinctValue)
 
         const oldMultiplicity =
           updatedValues.get(distinctKey)?.[0] ??

@@ -386,9 +386,14 @@ describe('Operators', () => {
       expect(updateResult.messageCount).toBeLessThanOrEqual(4) // Should be incremental
       expect(updateResult.messageCount).toBeGreaterThan(0) // Should have changes
 
-      // Check that only affected keys produce messages
+      // Check that only affected keys produce messages - should be key1 (removed) and key4 (added to top 3)
       const affectedKeys = new Set(updateResult.messages.map(([[key, _value], _mult]) => key))
       expect(affectedKeys.size).toBeLessThanOrEqual(2) // Should only affect key1 and key4
+      
+      // Verify specific keys are affected
+      for (const key of affectedKeys) {
+        expect(['key1', 'key4'].includes(key)).toBe(true)
+      }
     })
 
     test('incremental update - modifying a row', () => {
@@ -449,9 +454,14 @@ describe('Operators', () => {
       expect(updateResult.messageCount).toBeLessThanOrEqual(6) // Should be incremental (modify operation)
       expect(updateResult.messageCount).toBeGreaterThan(0) // Should have changes
 
-      // Check that only affected keys produce messages
+      // Check that only affected keys produce messages - should be key2 (modified) and key4 (added to top 3)  
       const affectedKeys = new Set(updateResult.messages.map(([[key, _value], _mult]) => key))
       expect(affectedKeys.size).toBeLessThanOrEqual(2) // Should only affect key2 and key4
+      
+      // Verify specific keys are affected
+      for (const key of affectedKeys) {
+        expect(['key2', 'key4'].includes(key)).toBe(true)
+      }
     })
   })
 })

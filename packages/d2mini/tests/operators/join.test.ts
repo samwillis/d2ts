@@ -3,6 +3,7 @@ import { D2 } from '../../src/d2.js'
 import { MultiSet } from '../../src/multiset.js'
 import { join } from '../../src/operators/join.js'
 import { output } from '../../src/operators/output.js'
+import { KeyedMessageTracker, assertKeyedResults, assertOnlyKeysAffected } from '../test-utils.js'
 
 describe('Operators', () => {
   describe('Join operation', () => {
@@ -15,12 +16,12 @@ function testJoin() {
     const graph = new D2()
     const inputA = graph.newInput<[number, string]>()
     const inputB = graph.newInput<[number, string]>()
-    const messages: MultiSet<[number, [string, string]]>[] = []
+    const tracker = new KeyedMessageTracker<number, [string, string]>()
 
     inputA.pipe(
       join(inputB),
       output((message) => {
-        messages.push(message as MultiSet<[number, [string, string]]>)
+        tracker.addMessage(message as MultiSet<[number, [string, string]]>)
       }),
     )
 
@@ -37,32 +38,39 @@ function testJoin() {
       new MultiSet([
         [[1, 'x'], 1],
         [[2, 'y'], 1],
-        [[3, 'z'], 1],
+        [[3, 'z'], 1], // key 3 only exists in B, so no join output expected
       ]),
     )
 
     graph.run()
 
-    const data = messages.map((m) => m.getInner())
-
-    expect(data).toEqual([
+    const result = tracker.getResult()
+    
+    // Assert only keys that can actually join (1, 2) are affected, not key 3
+    assertOnlyKeysAffected('basic join operation', result.messages, [1, 2])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'basic join operation',
+      result,
       [
-        [[1, ['a', 'x']], 1],
-        [[2, ['b', 'y']], 1],
+        [1, ['a', 'x']],
+        [2, ['b', 'y']],
       ],
-    ])
+      4 // Expected message count
+    )
   })
 
   test('join with late arriving data', () => {
     const graph = new D2()
     const inputA = graph.newInput<[number, string]>()
     const inputB = graph.newInput<[number, string]>()
-    const messages: MultiSet<[number, [string, string]]>[] = []
+    const tracker = new KeyedMessageTracker<number, [string, string]>()
 
     inputA.pipe(
       join(inputB),
       output((message) => {
-        messages.push(message as MultiSet<[number, [string, string]]>)
+        tracker.addMessage(message as MultiSet<[number, [string, string]]>)
       }),
     )
 
@@ -86,14 +94,21 @@ function testJoin() {
 
     graph.run()
 
-    const data = messages.map((m) => m.getInner())
-
-    expect(data).toEqual([
+    const result = tracker.getResult()
+    
+    // Assert only expected keys (1, 2) are affected in the join output
+    assertOnlyKeysAffected('join with late arriving data', result.messages, [1, 2])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'join with late arriving data',
+      result,
       [
-        [[1, ['a', 'x']], 1],
-        [[2, ['b', 'y']], 1],
+        [1, ['a', 'x']],
+        [2, ['b', 'y']],
       ],
-    ])
+      4 // Expected message count
+    )
   })
 
   test('join with negative multiplicities', () => {
