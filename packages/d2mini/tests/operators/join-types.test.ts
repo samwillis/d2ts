@@ -37,13 +37,13 @@ describe('Operators', () => {
           const graph = new D2()
           const inputA = graph.newInput<[string, string]>()
           const inputB = graph.newInput<[string, string]>()
-          const results: any[] = []
+          const tracker = new KeyedMessageTracker<string, [string | null, string | null]>()
 
           inputA.pipe(
             join(inputB, joinType as any),
             consolidate(),
             output((message) => {
-              results.push(...message.getInner())
+              tracker.addMessage(message)
             }),
           )
 
@@ -79,78 +79,33 @@ describe('Operators', () => {
           // Run the graph - should process all batches
           graph.run()
 
-          // Collect all keys that appear in the results (regardless of multiplicity)
-          const processedKeys = new Set<string>()
-          for (const [[key, _], _mult] of results) {
-            processedKeys.add(key)
-          }
+          const result = tracker.getResult()
 
-          // Verify behavior based on join type
+          // Determine expected keys based on join type
+          let expectedKeys: string[] = []
           switch (joinType) {
             case 'inner':
-              // Only matching keys should appear
-              expect(processedKeys.has('batch1_item1')).toBe(true)
-              expect(processedKeys.has('batch2_item1')).toBe(true)
-              expect(processedKeys.has('batch3_item2')).toBe(true)
-              // Non-matching keys should not appear
-              expect(processedKeys.has('batch1_item2')).toBe(false)
-              expect(processedKeys.has('batch3_item1')).toBe(false)
-              expect(processedKeys.has('non_matching')).toBe(false)
-              expect(processedKeys.size).toBe(3)
+              expectedKeys = ['batch1_item1', 'batch2_item1', 'batch3_item2']
               break
-
             case 'left':
-              // All inputA keys should appear (some with null for inputB)
-              expect(processedKeys.has('batch1_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch1_item2')).toBe(true) // unmatched
-              expect(processedKeys.has('batch2_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch3_item1')).toBe(true) // unmatched
-              expect(processedKeys.has('batch3_item2')).toBe(true) // matched
-              // InputB-only keys should not appear
-              expect(processedKeys.has('non_matching')).toBe(false)
-              expect(processedKeys.size).toBe(5)
+              expectedKeys = ['batch1_item1', 'batch1_item2', 'batch2_item1', 'batch3_item1', 'batch3_item2']
               break
-
             case 'right':
-              // All inputB keys should appear (some with null for inputA)
-              expect(processedKeys.has('batch1_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch2_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch3_item2')).toBe(true) // matched
-              expect(processedKeys.has('non_matching')).toBe(true) // unmatched
-              // InputA-only keys should not appear
-              expect(processedKeys.has('batch1_item2')).toBe(false)
-              expect(processedKeys.has('batch3_item1')).toBe(false)
-              expect(processedKeys.size).toBe(4)
+              expectedKeys = ['batch1_item1', 'batch2_item1', 'batch3_item2', 'non_matching']
               break
-
             case 'full':
-              // All keys from both inputs should appear
-              expect(processedKeys.has('batch1_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch1_item2')).toBe(true) // inputA only
-              expect(processedKeys.has('batch2_item1')).toBe(true) // matched
-              expect(processedKeys.has('batch3_item1')).toBe(true) // inputA only
-              expect(processedKeys.has('batch3_item2')).toBe(true) // matched
-              expect(processedKeys.has('non_matching')).toBe(true) // inputB only
-              expect(processedKeys.size).toBe(6)
+              expectedKeys = ['batch1_item1', 'batch1_item2', 'batch2_item1', 'batch3_item1', 'batch3_item2', 'non_matching']
               break
-
             case 'anti':
-              // Only inputA keys that don't match inputB should appear
-              expect(processedKeys.has('batch1_item2')).toBe(true) // unmatched in inputA
-              expect(processedKeys.has('batch3_item1')).toBe(true) // unmatched in inputA
-              // Matched keys should not appear
-              expect(processedKeys.has('batch1_item1')).toBe(false)
-              expect(processedKeys.has('batch2_item1')).toBe(false)
-              expect(processedKeys.has('batch3_item2')).toBe(false)
-              // InputB-only keys should not appear
-              expect(processedKeys.has('non_matching')).toBe(false)
-              expect(processedKeys.size).toBe(2)
+              expectedKeys = ['batch1_item2', 'batch3_item1']
               break
           }
 
-          // Most importantly: ensure we actually got some results
-          // (This test would have failed before the bug fix due to data loss)
-          expect(results.length).toBeGreaterThan(0)
+          // Assert only expected keys are affected
+          assertOnlyKeysAffected(`${joinType} join with multiple batches`, result.messages, expectedKeys)
+
+          // Verify that we actually got some results
+          expect(result.messages.length).toBeGreaterThan(0)
         })
       })
     })

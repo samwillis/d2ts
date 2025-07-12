@@ -10,7 +10,7 @@ describe('Operators', () => {
     test('basic reduce operation', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -21,7 +21,7 @@ describe('Operators', () => {
           return [[sum, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -38,20 +38,27 @@ describe('Operators', () => {
       input.sendData(new MultiSet([[['b', 5], 1]]))
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a' and 'b' are affected
+      assertOnlyKeysAffected('basic reduce operation', result.messages, ['a', 'b'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'basic reduce operation',
+        result,
         [
-          [['a', 7], 1],
-          [['b', 9], 1],
+          ['a', 7], // 1*2 + 2*1 + 3*1 = 7
+          ['b', 9], // 4*1 + 5*1 = 9
         ],
-      ])
+        4 // Expected message count
+      )
     })
 
     test('reduce with negative multiplicities', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -62,7 +69,7 @@ describe('Operators', () => {
           return [[sum, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -77,14 +84,21 @@ describe('Operators', () => {
       )
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a' and 'b' are affected
+      assertOnlyKeysAffected('reduce with negative multiplicities', result.messages, ['a', 'b'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'reduce with negative multiplicities',
+        result,
         [
-          [['a', 3], 1],
-          [['b', -6], 1],
+          ['a', 3], // 1*(-1) + 2*2 = 3
+          ['b', -6], // 3*(-2) = -6
         ],
-      ])
+        4 // Expected message count
+      )
     })
 
     test('multiple incremental updates to same key', () => {
@@ -173,7 +187,7 @@ describe('Operators', () => {
     test('updates that cancel out completely', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -184,7 +198,7 @@ describe('Operators', () => {
           return [[sum, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -209,26 +223,27 @@ describe('Operators', () => {
       )
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
-        // First update: a=8, b=10
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a' and 'b' are affected
+      assertOnlyKeysAffected('updates that cancel out completely', result.messages, ['a', 'b'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'updates that cancel out completely',
+        result,
         [
-          [['a', 8], 1],
-          [['b', 10], 1],
+          ['a', 0], // 5+3-5-3 = 0
+          ['b', 10], // 10 (unchanged)
         ],
-        // Second update: remove old sum, add new sum (which is 0)
-        [
-          [['a', 8], -1], // Remove old sum for a
-          [['a', 0], 1], // Add new sum for a (which is 0)
-        ],
-      ])
+        6 // Expected message count
+      )
     })
 
     test('mixed positive and negative updates', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -239,7 +254,7 @@ describe('Operators', () => {
           return [[sum, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -267,29 +282,28 @@ describe('Operators', () => {
       )
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
-        // First update: a=20 (10+5+5), b=20
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a', 'b', and 'c' are affected
+      assertOnlyKeysAffected('mixed positive and negative updates', result.messages, ['a', 'b', 'c'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'mixed positive and negative updates',
+        result,
         [
-          [['a', 20], 1],
-          [['b', 20], 1],
+          ['a', 12], // 10+5+5-10+2 = 12
+          ['b', 15], // 20-20+15 = 15
+          ['c', 100], // 100
         ],
-        // Second update: a=12 (5+5+2), b=15, c=100
-        [
-          [['a', 20], -1], // Remove old sum for a
-          [['a', 12], 1], // Add new sum for a
-          [['b', 20], -1], // Remove old sum for b
-          [['b', 15], 1], // Add new sum for b
-          [['c', 100], 1], // Add new key c
-        ],
-      ])
+        8 // Expected message count
+      )
     })
 
     test('complex aggregation with multiple updates', () => {
       const graph = new D2()
       const input = graph.newInput<[string, { value: number; count: number }]>()
-      const messages: MultiSet<[string, { avg: number; total: number }]>[] = []
+      const tracker = new KeyedMessageTracker<string, { avg: number; total: number }>()
 
       input.pipe(
         reduce((vals) => {
@@ -303,7 +317,7 @@ describe('Operators', () => {
           return [[{ avg, total: totalSum }, 1]]
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -335,31 +349,27 @@ describe('Operators', () => {
       )
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
-        // First update: a avg=(10*2+20*1)/(2+1)=40/3≈13.33, total=40
-        [[['a', { avg: 40 / 3, total: 40 }], 1]],
-        // Second update:
-        // a avg=(10*2+20*1+30*1)/(2+1+1)=70/4=17.5, total=70
-        // b avg=50, total=150
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a' and 'b' are affected
+      assertOnlyKeysAffected('complex aggregation with multiple updates', result.messages, ['a', 'b'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'complex aggregation with multiple updates',
+        result,
         [
-          [['a', { avg: 40 / 3, total: 40 }], -1], // Remove old
-          [['a', { avg: 17.5, total: 70 }], 1], // Add new
-          [['b', { avg: 50, total: 150 }], 1], // New key
+          ['a', { avg: 25, total: 50 }], // Final: (20*1+30*1)/(1+1) = 50/2 = 25
+          ['b', { avg: 50, total: 150 }], // Final: 50*3 = 150
         ],
-        // Third update: a avg=(20*1+30*1)/(1+1)=50/2=25, total=50
-        [
-          [['a', { avg: 17.5, total: 70 }], -1], // Remove old
-          [['a', { avg: 25, total: 50 }], 1], // Add new
-        ],
-      ])
+        6 // Expected message count
+      )
     })
 
     test('updates with zero-multiplicity results', () => {
       const graph = new D2()
       const input = graph.newInput<[string, number]>()
-      const messages: MultiSet<[string, number]>[] = []
+      const tracker = new KeyedMessageTracker<string, number>()
 
       input.pipe(
         reduce((vals) => {
@@ -371,7 +381,7 @@ describe('Operators', () => {
           return sum !== 0 ? [[sum, 1]] : []
         }),
         output((message) => {
-          messages.push(message)
+          tracker.addMessage(message)
         }),
       )
 
@@ -395,23 +405,21 @@ describe('Operators', () => {
       input.sendData(new MultiSet([[['a', 7], 1]]))
       graph.run()
 
-      const data = messages.map((m) => m.getInner())
-
-      expect(data).toEqual([
-        // First update: a=2, b=10
+      const result = tracker.getResult()
+      
+      // Assert only keys 'a' and 'b' are affected
+      assertOnlyKeysAffected('updates with zero-multiplicity results', result.messages, ['a', 'b'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'updates with zero-multiplicity results',
+        result,
         [
-          [['a', 2], 1],
-          [['b', 10], 1],
+          ['a', 7], // Final: 5-3-2+7 = 7
+          ['b', 10], // Final: 10 (unchanged)
         ],
-        // Second update: a becomes 0 (filtered out), only removal
-        [
-          [['a', 2], -1], // Remove old sum for a
-        ],
-        // Third update: a=7 (0+7)
-        [
-          [['a', 7], 1], // Add new sum for a
-        ],
-      ])
+        5 // Expected message count
+      )
     })
   })
 })

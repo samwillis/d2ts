@@ -3,6 +3,7 @@ import { D2 } from '../../src/d2.js'
 import { MultiSet } from '../../src/multiset.js'
 import { count } from '../../src/operators/count.js'
 import { output } from '../../src/operators/output.js'
+import { KeyedMessageTracker, assertKeyedResults, assertOnlyKeysAffected } from '../test-utils.js'
 
 describe('Operators', () => {
   describe('Count operation', () => {
@@ -14,12 +15,12 @@ function testCount() {
   test('basic count operation', () => {
     const graph = new D2()
     const input = graph.newInput<[number, string]>()
-    const messages: MultiSet<[number, number]>[] = []
+    const tracker = new KeyedMessageTracker<number, number>()
 
     input.pipe(
       count(),
       output((message) => {
-        messages.push(message)
+        tracker.addMessage(message)
       }),
     )
 
@@ -38,26 +39,33 @@ function testCount() {
     input.sendData(new MultiSet([[[3, 'z'], 1]]))
     graph.run()
 
-    const data = messages.map((m) => m.getInner())
-
-    expect(data).toEqual([
+    const result = tracker.getResult()
+    
+    // Assert only keys that have values are affected
+    assertOnlyKeysAffected('basic count operation', result.messages, [1, 2, 3])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'basic count operation',
+      result,
       [
-        [[1, 2], 1],
-        [[2, 3], 1],
-        [[3, 1], 1],
+        [1, 2], // 2 values for key 1
+        [2, 3], // 3 values for key 2
+        [3, 1], // 1 value for key 3 (1 + (-1) + 1 = 1)
       ],
-    ])
+      6 // Expected message count
+    )
   })
 
   test('count with all negative multiplicities', () => {
     const graph = new D2()
     const input = graph.newInput<[number, string]>()
-    const messages: MultiSet<[number, number]>[] = []
+    const tracker = new KeyedMessageTracker<number, number>()
 
     input.pipe(
       count(),
       output((message) => {
-        messages.push(message)
+        tracker.addMessage(message)
       }),
     )
 
@@ -71,20 +79,31 @@ function testCount() {
     )
     graph.run()
 
-    const data = messages.map((m) => m.getInner())
-
-    expect(data).toEqual([[[[1, -3], 1]]])
+    const result = tracker.getResult()
+    
+    // Assert only key 1 is affected
+    assertOnlyKeysAffected('count with all negative multiplicities', result.messages, [1])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'count with all negative multiplicities',
+      result,
+      [
+        [1, -3], // -1 + (-2) = -3
+      ],
+      2 // Expected message count
+    )
   })
 
   test('count with multiple batches', () => {
     const graph = new D2()
     const input = graph.newInput<[string, string]>()
-    const messages: MultiSet<[string, number]>[] = []
+    const tracker = new KeyedMessageTracker<string, number>()
 
     input.pipe(
       count(),
       output((message) => {
-        messages.push(message)
+        tracker.addMessage(message)
       }),
     )
 
@@ -106,15 +125,20 @@ function testCount() {
     )
     graph.run()
 
-    const data = messages.map((m) => m.getInner())
-
-    expect(data).toEqual([
-      [[['one', 2], 1]],
+    const result = tracker.getResult()
+    
+    // Assert only keys 'one' and 'two' are affected
+    assertOnlyKeysAffected('count with multiple batches', result.messages, ['one', 'two'])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'count with multiple batches',
+      result,
       [
-        [['one', 2], -1], // <-- old count of 'one' removed
-        [['one', 3], 1],
-        [['two', 1], 1],
+        ['one', 3], // 2 + 1 = 3
+        ['two', 1], // 1
       ],
-    ])
+      5 // Expected message count
+    )
   })
 }
