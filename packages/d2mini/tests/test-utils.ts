@@ -22,6 +22,48 @@ export function materializeResults<T>(messages: [T, number][]): Map<string, T> {
 }
 
 /**
+ * Materialize a keyed result set from diff messages
+ * Takes an array of keyed messages and consolidates them per key
+ */
+export function materializeKeyedResults<K, V>(messages: [[K, V], number][]): Map<K, V> {
+  const result = new Map<K, Map<string, { value: V, multiplicity: number }>>()
+  
+  // Group messages by key first
+  for (const [[key, value], multiplicity] of messages) {
+    if (!result.has(key)) {
+      result.set(key, new Map())
+    }
+    
+    const valueMap = result.get(key)!
+    const valueKey = JSON.stringify(value)
+    const existing = valueMap.get(valueKey)
+    const newMultiplicity = (existing?.multiplicity ?? 0) + multiplicity
+    
+    if (newMultiplicity === 0) {
+      valueMap.delete(valueKey)
+    } else {
+      valueMap.set(valueKey, { value, multiplicity: newMultiplicity })
+    }
+  }
+  
+  // Extract final values per key
+  const finalResult = new Map<K, V>()
+  for (const [key, valueMap] of result.entries()) {
+    // Filter to only positive multiplicities
+    const positiveValues = Array.from(valueMap.values()).filter(entry => entry.multiplicity > 0)
+    
+    if (positiveValues.length === 1) {
+      finalResult.set(key, positiveValues[0].value)
+    } else if (positiveValues.length > 1) {
+      throw new Error(`Key ${key} has multiple final values: ${positiveValues.map(v => JSON.stringify(v.value)).join(', ')}`)
+    }
+    // If no positive values, key was completely removed
+  }
+  
+  return finalResult
+}
+
+/**
  * Convert a Map back to a sorted array for comparison
  */
 export function mapToSortedArray<T>(map: Map<string, T>): T[] {
@@ -53,6 +95,13 @@ export interface TestResult<T> {
   sortedResults: T[]
 }
 
+export interface KeyedTestResult<K, V> {
+  messages: [[K, V], number][]
+  messageCount: number
+  materializedResults: Map<K, V>
+  sortedResults: [K, V][]
+}
+
 export class MessageTracker<T> {
   private messages: [T, number][] = []
   
@@ -63,6 +112,33 @@ export class MessageTracker<T> {
   getResult(): TestResult<T> {
     const materializedResults = materializeResults(this.messages)
     const sortedResults = mapToSortedArray(materializedResults)
+    
+    return {
+      messages: this.messages,
+      messageCount: this.messages.length,
+      materializedResults,
+      sortedResults
+    }
+  }
+  
+  reset() {
+    this.messages = []
+  }
+}
+
+export class KeyedMessageTracker<K, V> {
+  private messages: [[K, V], number][] = []
+  
+  addMessage(message: MultiSet<[K, V]>) {
+    this.messages.push(...message.getInner())
+  }
+  
+  getResult(): KeyedTestResult<K, V> {
+    const materializedResults = materializeKeyedResults(this.messages)
+    const sortedResults = Array.from(materializedResults.entries()).sort((a, b) => {
+      // Sort by key for consistent ordering
+      return JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0]))
+    })
     
     return {
       messages: this.messages,
@@ -103,6 +179,39 @@ export function assertResults<T>(
   if (actual.messageCount > expected.length * 2) {
     console.warn(`⚠️  ${testName}: High message count (${actual.messageCount} messages for ${expected.length} expected results)`)
   }
+}
+
+/**
+ * Assert that keyed results match expected, with message count logging
+ */
+export function assertKeyedResults<K, V>(
+  testName: string,
+  actual: KeyedTestResult<K, V>,
+  expected: [K, V][],
+  maxExpectedMessages?: number
+) {
+  const expectedSorted = expected.sort((a, b) => {
+    return JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0]))
+  })
+  
+  console.log(`${testName}: ${actual.messageCount} messages, ${actual.sortedResults.length} final results per key`)
+  
+  // Check that materialized results match expected
+  expect(actual.sortedResults).toEqual(expectedSorted)
+  
+  // Check message count constraints if provided
+  if (maxExpectedMessages !== undefined) {
+    expect(actual.messageCount).toBeLessThanOrEqual(maxExpectedMessages)
+  }
+  
+  // Log for debugging
+  if (actual.messageCount > expected.length * 3) {
+    console.warn(`⚠️  ${testName}: High message count (${actual.messageCount} messages for ${expected.length} expected key-value pairs)`)
+  }
+  
+  // Log key insights
+  const affectedKeys = new Set(actual.messages.map(([[key, _value], _mult]) => key))
+  console.log(`${testName}: ✅ ${affectedKeys.size} keys affected, ${actual.sortedResults.length} final keys`)
 }
 
 /**

@@ -4,7 +4,7 @@ import { MultiSet } from '../../src/multiset.js'
 import { join, JoinType } from '../../src/operators/join.js'
 import { output } from '../../src/operators/output.js'
 import { consolidate } from '../../src/operators/consolidate.js'
-import { MessageTracker, assertResults, assertOnlyKeysAffected } from '../test-utils.js'
+import { KeyedMessageTracker, assertKeyedResults, assertOnlyKeysAffected } from '../test-utils.js'
 
 /**
  * Sort results by multiplicity and then key
@@ -162,7 +162,7 @@ function testJoin(joinType: JoinType) {
     const graph = new D2()
     const inputA = graph.newInput<[number, string]>()
     const inputB = graph.newInput<[number, string]>()
-    const tracker = new MessageTracker<[number, [string | null, string | null]]>()
+    const tracker = new KeyedMessageTracker<number, [string | null, string | null]>()
 
     inputA.pipe(
       join(inputB, joinType as any),
@@ -188,7 +188,7 @@ function testJoin(joinType: JoinType) {
     )
     graph.run()
 
-    const expectedResults = {
+    const expectedResults: Record<JoinType, [number, [string | null, string | null]][]> = {
       inner: [
         // only 2 is in both streams, so we get it
         [2, ['B', 'X']],
@@ -215,7 +215,7 @@ function testJoin(joinType: JoinType) {
     }
 
     const result = tracker.getResult()
-    assertResults(
+    assertKeyedResults(
       `${joinType} join - initial join with missing rows`,
       result,
       expectedResults[joinType],
@@ -227,7 +227,7 @@ function testJoin(joinType: JoinType) {
     const graph = new D2()
     const inputA = graph.newInput<[number, string]>()
     const inputB = graph.newInput<[number, string]>()
-    const tracker = new MessageTracker<[number, [string | null, string | null]]>()
+    const tracker = new KeyedMessageTracker<number, [string | null, string | null]>()
 
     inputA.pipe(
       join(inputB, joinType as any),
@@ -260,7 +260,7 @@ function testJoin(joinType: JoinType) {
         */
 
     // Check initial state
-    const initialExpectedResults = {
+    const initialExpectedResults: Record<JoinType, [number, [string | null, string | null]][]> = {
       inner: [
         // Only 1 is in both tables, so it's the only result
         [1, ['A', 'X']],
@@ -287,7 +287,7 @@ function testJoin(joinType: JoinType) {
     }
 
     const initialResult = tracker.getResult()
-    assertResults(
+    assertKeyedResults(
       `${joinType} join - insert left (initial)`,
       initialResult,
       initialExpectedResults[joinType],
@@ -312,7 +312,7 @@ function testJoin(joinType: JoinType) {
         | 2 | Y |
         */
 
-    const expectedResults = {
+    const expectedResults: Record<JoinType, [number, [string | null, string | null]][]> = {
       inner: [
         // 2 is now in both tables, so we receive it for the first time
         [2, ['B', 'Y']],
@@ -337,7 +337,7 @@ function testJoin(joinType: JoinType) {
     }
 
     const result = tracker.getResult()
-    assertResults(
+    assertKeyedResults(
       `${joinType} join - insert left`,
       result,
       expectedResults[joinType],
@@ -347,7 +347,7 @@ function testJoin(joinType: JoinType) {
     // Verify only affected keys produced messages
     assertOnlyKeysAffected(
       `${joinType} join - insert left`,
-      result.messages as [[number, [string | null, string | null]], number][],
+      result.messages,
       [2] // Only key 2 should be affected
     )
   })
