@@ -66,20 +66,21 @@ export class MultiSet<T> {
    * (record, multiplicity) pair.
    */
   consolidate(): MultiSet<T> {
-    const consolidated = new Map<T, number>()
+    const consolidated = new Map<string, { data: T, multiplicity: number }>()
 
     for (const [data, multiplicity] of this.#inner) {
-      const existing = consolidated.get(data) ?? 0
-      const newValue = existing + multiplicity
+      const key = JSON.stringify(data)
+      const existing = consolidated.get(key)
+      const newMultiplicity = (existing?.multiplicity ?? 0) + multiplicity
       
-      if (newValue === 0) {
-        consolidated.delete(data)
+      if (newMultiplicity === 0) {
+        consolidated.delete(key)
       } else {
-        consolidated.set(data, newValue)
+        consolidated.set(key, { data, multiplicity: newMultiplicity })
       }
     }
 
-    return new MultiSet([...consolidated.entries()])
+    return new MultiSet([...consolidated.values()].map(entry => [entry.data, entry.multiplicity]))
   }
 
   extend(other: MultiSet<T> | MultiSetArray<T>): void {
