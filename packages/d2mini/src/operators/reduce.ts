@@ -7,7 +7,6 @@ import {
 import { StreamBuilder } from '../d2.js'
 import { MultiSet } from '../multiset.js'
 import { Index } from '../indexes.js'
-import { hash } from '../utils.js'
 
 /**
  * Base operator for reduction operations (version-free)
@@ -45,29 +44,25 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
       const currOut = this.#indexOut.get(key)
       const out = this.#f(curr)
 
-      // Create maps for current and previous outputs using hash-based keys
-      const newOutputMap = new Map<string, { value: V2, multiplicity: number }>()
-      const oldOutputMap = new Map<string, { value: V2, multiplicity: number }>()
+      // Create maps for current and previous outputs using values directly as keys
+      const newOutputMap = new Map<V2, number>()
+      const oldOutputMap = new Map<V2, number>()
 
       // Process new output
       for (const [value, multiplicity] of out) {
-        const valueHash = hash(value)
-        const existing = newOutputMap.get(valueHash)
-        const newMultiplicity = (existing?.multiplicity ?? 0) + multiplicity
-        newOutputMap.set(valueHash, { value, multiplicity: newMultiplicity })
+        const existing = newOutputMap.get(value) ?? 0
+        newOutputMap.set(value, existing + multiplicity)
       }
 
       // Process previous output
       for (const [value, multiplicity] of currOut) {
-        const valueHash = hash(value)
-        const existing = oldOutputMap.get(valueHash)
-        const newMultiplicity = (existing?.multiplicity ?? 0) + multiplicity
-        oldOutputMap.set(valueHash, { value, multiplicity: newMultiplicity })
+        const existing = oldOutputMap.get(value) ?? 0
+        oldOutputMap.set(value, existing + multiplicity)
       }
 
       // First, emit removals for old values that are no longer present
-      for (const [valueHash, { value, multiplicity }] of oldOutputMap) {
-        if (!newOutputMap.has(valueHash)) {
+      for (const [value, multiplicity] of oldOutputMap) {
+        if (!newOutputMap.has(value)) {
           // Remove the old value entirely
           result.push([[key, value], -multiplicity])
           this.#indexOut.addValue(key, [value, -multiplicity])
@@ -75,8 +70,8 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
       }
 
       // Then, emit additions for new values that are not present in old
-      for (const [valueHash, { value, multiplicity }] of newOutputMap) {
-        if (!oldOutputMap.has(valueHash)) {
+      for (const [value, multiplicity] of newOutputMap) {
+        if (!oldOutputMap.has(value)) {
           // Add the new value only if it has non-zero multiplicity
           if (multiplicity !== 0) {
             result.push([[key, value], multiplicity])
@@ -86,10 +81,10 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
       }
 
       // Finally, emit multiplicity changes for values that were present and are still present
-      for (const [valueHash, { value, multiplicity: newMultiplicity }] of newOutputMap) {
-        const oldEntry = oldOutputMap.get(valueHash)
-        if (oldEntry !== undefined) {
-          const delta = newMultiplicity - oldEntry.multiplicity
+      for (const [value, newMultiplicity] of newOutputMap) {
+        const oldMultiplicity = oldOutputMap.get(value)
+        if (oldMultiplicity !== undefined) {
+          const delta = newMultiplicity - oldMultiplicity
           // Only emit actual changes, i.e. non-zero deltas
           if (delta !== 0) {
             result.push([[key, value], delta])
