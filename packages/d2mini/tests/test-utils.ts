@@ -182,8 +182,11 @@ export function assertResults<T>(
     expect(actual.messageCount).toBeLessThanOrEqual(maxExpectedMessages)
   }
   
-  // Log for debugging
-  if (actual.messageCount > expected.length * 2) {
+  // Log for debugging - use more reasonable threshold
+  // For empty results, allow up to 2 messages (typical for removal operations)
+  // For non-empty results, allow up to 3x the expected count
+  const reasonableThreshold = expected.length === 0 ? 2 : expected.length * 3
+  if (actual.messageCount > reasonableThreshold) {
     console.warn(`⚠️  ${testName}: High message count (${actual.messageCount} messages for ${expected.length} expected results)`)
   }
 }
@@ -215,8 +218,11 @@ export function assertKeyedResults<K, V>(
     expect(actual.messageCount).toBeLessThanOrEqual(maxExpectedMessages)
   }
   
-  // Log for debugging
-  if (actual.messageCount > expected.length * 3) {
+  // Log for debugging - use more reasonable threshold
+  // Account for scenarios where messages cancel out due to object identity
+  // Allow up to 4x the expected count to accommodate remove/add pairs
+  const reasonableThreshold = Math.max(expected.length * 4, 2)
+  if (actual.messageCount > reasonableThreshold) {
     console.warn(`⚠️  ${testName}: High message count (${actual.messageCount} messages for ${expected.length} expected key-value pairs)`)
   }
   
