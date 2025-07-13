@@ -250,13 +250,13 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
     }
 
     if (res.moveIn) {
-      const valueWithoutHash = mapValue(res.moveIn, untagValue)
-      result.push([[key, valueWithoutHash], 1])
+      const valueWithoutTieBreaker = mapValue(res.moveIn, untagValue)
+      result.push([[key, valueWithoutTieBreaker], 1])
     }
 
     if (res.moveOut) {
-      const valueWithoutHash = mapValue(res.moveOut, untagValue)
-      result.push([[key, valueWithoutHash], -1])
+      const valueWithoutTieBreaker = mapValue(res.moveOut, untagValue)
+      result.push([[key, valueWithoutTieBreaker], -1])
     }
 
     return
@@ -334,7 +334,7 @@ function mapValue<V, W>(
   return [f(getValue(value)), getIndex(value)]
 }
 
-// Abstraction for values tagged with a hash
+  // Abstraction for values tagged with a tie breaker
 export type TieBreaker = string
 export type TieBreakerTaggedValue<V> = [V, TieBreaker]
 
