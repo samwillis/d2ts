@@ -421,5 +421,131 @@ describe('Operators', () => {
         5 // Expected message count
       )
     })
+
+    test('reduce incremental updates - only affected keys produce messages', () => {
+      const graph = new D2()
+      const input = graph.newInput<[string, number]>()
+      const tracker = new KeyedMessageTracker<string, number>()
+
+      input.pipe(
+        reduce((vals) => {
+          let sum = 0
+          for (const [val, diff] of vals) {
+            sum += val * diff
+          }
+          return [[sum, 1]]
+        }),
+        output((message) => {
+          tracker.addMessage(message)
+        }),
+      )
+
+      graph.finalize()
+
+      // Initial data: establish state for keys 'x', 'y', 'z'
+      input.sendData(
+        new MultiSet([
+          [['x', 10], 1],
+          [['x', 20], 1],
+          [['y', 5], 1],
+          [['y', 15], 1],
+          [['y', 25], 1],
+          [['z', 100], 1],
+        ]),
+      )
+      graph.run()
+
+      // Reset tracker to focus on incremental updates
+      tracker.reset()
+
+      // Incremental update: only affect keys 'x' and 'z'
+      input.sendData(
+        new MultiSet([
+          [['x', 30], 1], // Add to 'x' (30 -> 60)
+          [['z', 100], -1], // Remove from 'z' (100 -> 0)
+        ]),
+      )
+      graph.run()
+
+      const result = tracker.getResult()
+      
+      // Assert only keys 'x' and 'z' are affected (NOT 'y')
+      assertOnlyKeysAffected('reduce incremental updates', result.messages, ['x', 'z'])
+      
+      // Assert the final materialized results are correct
+      assertKeyedResults(
+        'reduce incremental updates',
+        result,
+        [
+          ['x', 60], // Sum increased from 30 to 60
+          ['z', 0], // Sum decreased from 100 to 0
+        ],
+        4 // Expected message count: remove old 'x', add new 'x', remove old 'z', add new 'z'
+      )
+    })
+
+    test('reduce with efficient hash-based comparison - no unnecessary messages', () => {
+      const graph = new D2()
+      const input = graph.newInput<[string, { id: number; value: number }]>()
+      const tracker = new KeyedMessageTracker<string, { result: number }>()
+
+      input.pipe(
+        reduce((vals) => {
+          let sum = 0
+          for (const [val, diff] of vals) {
+            sum += val.value * diff
+          }
+          // Return a new object each time - but hash comparison handles this efficiently
+          return [[{ result: sum }, 1]]
+        }),
+        output((message) => {
+          tracker.addMessage(message)
+        }),
+      )
+
+      graph.finalize()
+
+      // Initial data: establish state for keys 'a', 'b', 'c'
+      input.sendData(
+        new MultiSet([
+          [['a', { id: 1, value: 10 }], 1],
+          [['a', { id: 2, value: 20 }], 1],
+          [['b', { id: 3, value: 100 }], 1],
+          [['c', { id: 4, value: 5 }], 1],
+          [['c', { id: 5, value: 15 }], 1],
+        ]),
+      )
+      graph.run()
+
+      // Reset tracker to focus on incremental updates
+      tracker.reset()
+
+      // Update that should NOT change the result value for key 'a'
+      input.sendData(
+        new MultiSet([
+          [['a', { id: 1, value: 10 }], -1], // Remove 10
+          [['a', { id: 6, value: 10 }], 1],   // Add 10 (same value, different object)
+          [['b', { id: 3, value: 100 }], -1], // Remove from 'b' (100 -> 0)
+        ]),
+      )
+      graph.run()
+
+      const result = tracker.getResult()
+      
+      // With hash comparison: 'a' produces 0 messages since content is identical
+      // This demonstrates the efficiency gained from hash-based comparison
+      const aMessages = result.messages.filter(([[key, _value], _mult]) => key === 'a')
+      expect(aMessages.length).toBe(0) // No unnecessary messages!
+      
+      // Only 'b' appears in final results and messages
+      assertKeyedResults(
+        'reduce with efficient hash-based comparison',
+        result,
+        [
+          ['b', { result: 0 }],   // Changed from 100 to 0
+        ],
+        2 // With hash comparison: only 2 messages (0 for 'a', 2 for 'b')
+      )
+    })
   })
 })

@@ -141,4 +141,60 @@ function testCount() {
       5 // Expected message count
     )
   })
+
+  test('count incremental updates - only affected keys produce messages', () => {
+    const graph = new D2()
+    const input = graph.newInput<[string, string]>()
+    const tracker = new KeyedMessageTracker<string, number>()
+
+    input.pipe(
+      count(),
+      output((message) => {
+        tracker.addMessage(message)
+      }),
+    )
+
+    graph.finalize()
+
+    // Initial data: establish state for keys 'a', 'b', 'c'
+    input.sendData(
+      new MultiSet([
+        [['a', 'item1'], 1],
+        [['a', 'item2'], 1],
+        [['b', 'item1'], 1],
+        [['b', 'item2'], 1],
+        [['b', 'item3'], 1],
+        [['c', 'item1'], 1],
+      ]),
+    )
+    graph.run()
+
+    // Reset tracker to focus on incremental updates
+    tracker.reset()
+
+    // Incremental update: only affect keys 'a' and 'c'
+    input.sendData(
+      new MultiSet([
+        [['a', 'item3'], 1], // Add to 'a' (2 -> 3)
+        [['c', 'item1'], -1], // Remove from 'c' (1 -> 0)
+      ]),
+    )
+    graph.run()
+
+    const result = tracker.getResult()
+    
+    // Assert only keys 'a' and 'c' are affected (NOT 'b')
+    assertOnlyKeysAffected('count incremental updates', result.messages, ['a', 'c'])
+    
+    // Assert the final materialized results are correct
+    assertKeyedResults(
+      'count incremental updates',
+      result,
+      [
+        ['a', 3], // Count increased from 2 to 3
+        ['c', 0], // Count decreased from 1 to 0
+      ],
+      4 // Expected message count: remove old 'a', add new 'a', remove old 'c', add new 'c'
+    )
+  })
 }
