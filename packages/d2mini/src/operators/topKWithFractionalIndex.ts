@@ -192,10 +192,10 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
       if (valueComparison !== 0) {
         return valueComparison
       }
-      // If the values are equal, compare on the tie breaker
+      // If the values are equal, compare on the tie breaker (object identity)
       const tieBreakerA = getTieBreaker(a)
       const tieBreakerB = getTieBreaker(b)
-      return tieBreakerA < tieBreakerB ? -1 : tieBreakerA > tieBreakerB ? 1 : 0
+      return tieBreakerA - tieBreakerB
     }
     this.#topK = this.createTopK(offset, limit, compareTaggedValues)
   }
@@ -335,11 +335,36 @@ function mapValue<V, W>(
 }
 
   // Abstraction for values tagged with a tie breaker
-export type TieBreaker = string
+// Object identity-based tie-breaking using WeakMap
+const objectIds = new WeakMap<object, number>()
+let nextObjectId = 0
+
+function getObjectId(value: any): number {
+  // For primitives, use a simple hash of their string representation
+  if (typeof value !== 'object' || value === null) {
+    // Simple string-based hash for primitives to ensure consistency
+    const str = String(value)
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash // Convert to 32-bit integer
+    }
+    return hash
+  }
+  
+  // For objects, use WeakMap to assign unique IDs
+  if (!objectIds.has(value)) {
+    objectIds.set(value, nextObjectId++)
+  }
+  return objectIds.get(value)!
+}
+
+export type TieBreaker = number
 export type TieBreakerTaggedValue<V> = [V, TieBreaker]
 
 function tagValue<V>(value: V): TieBreakerTaggedValue<V> {
-  return [value, JSON.stringify(value)]
+  return [value, getObjectId(value)]
 }
 
 function untagValue<V>(tieBreakerTaggedValue: TieBreakerTaggedValue<V>): V {
