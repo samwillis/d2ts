@@ -8,7 +8,7 @@ import { StreamBuilder } from '../d2.js'
 import { MultiSet } from '../multiset.js'
 import { Index } from '../indexes.js'
 import { generateKeyBetween } from 'fractional-indexing'
-import { binarySearch, hash } from '../utils.js'
+import { binarySearch } from '../utils.js'
 
 export interface TopKWithFractionalIndexOptions {
   limit?: number
@@ -171,7 +171,7 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
    * topK data structure that supports insertions and deletions
    * and returns changes to the topK.
    */
-  #topK: TopK<HashTaggedValue<V1>>
+  #topK: TopK<TieBreakerTaggedValue<V1>>
 
   constructor(
     id: number,
@@ -184,18 +184,18 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
     const limit = options.limit ?? Infinity
     const offset = options.offset ?? 0
     const compareTaggedValues = (
-      a: HashTaggedValue<V1>,
-      b: HashTaggedValue<V1>,
+      a: TieBreakerTaggedValue<V1>,
+      b: TieBreakerTaggedValue<V1>,
     ) => {
       // First compare on the value
-      const valueComparison = comparator(getValue(a), getValue(b))
+      const valueComparison = comparator(untagValue(a), untagValue(b))
       if (valueComparison !== 0) {
         return valueComparison
       }
-      // If the values are equal, compare on the hash
-      const hashA = getHash(a)
-      const hashB = getHash(b)
-      return hashA < hashB ? -1 : hashA > hashB ? 1 : 0
+      // If the values are equal, compare on the tie breaker
+      const tieBreakerA = getTieBreaker(a)
+      const tieBreakerB = getTieBreaker(b)
+      return tieBreakerA < tieBreakerB ? -1 : tieBreakerA > tieBreakerB ? 1 : 0
     }
     this.#topK = this.createTopK(offset, limit, compareTaggedValues)
   }
@@ -203,8 +203,8 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
   protected createTopK(
     offset: number,
     limit: number,
-    comparator: (a: HashTaggedValue<V1>, b: HashTaggedValue<V1>) => number,
-  ): TopK<HashTaggedValue<V1>> {
+    comparator: (a: TieBreakerTaggedValue<V1>, b: TieBreakerTaggedValue<V1>) => number,
+  ): TopK<TieBreakerTaggedValue<V1>> {
     return new TopKArray(offset, limit, comparator)
   }
 
@@ -232,7 +232,7 @@ export class TopKWithFractionalIndexOperator<K, V1> extends UnaryOperator<
     this.#index.addValue(key, [value, multiplicity])
     const newMultiplicity = this.#index.getMultiplicity(key, value)
 
-    let res: TopKChanges<HashTaggedValue<V1>> = { moveIn: null, moveOut: null }
+    let res: TopKChanges<TieBreakerTaggedValue<V1>> = { moveIn: null, moveOut: null }
     if (oldMultiplicity <= 0 && newMultiplicity > 0) {
       // The value was invisible but should now be visible
       // Need to insert it into the array of sorted values
@@ -335,17 +335,17 @@ function mapValue<V, W>(
 }
 
 // Abstraction for values tagged with a hash
-export type Hash = string
-export type HashTaggedValue<V> = [V, Hash]
+export type TieBreaker = string
+export type TieBreakerTaggedValue<V> = [V, TieBreaker]
 
-function tagValue<V>(value: V): HashTaggedValue<V> {
-  return [value, hash(value)]
+function tagValue<V>(value: V): TieBreakerTaggedValue<V> {
+  return [value, JSON.stringify(value)]
 }
 
-function untagValue<V>(hashTaggedValue: HashTaggedValue<V>): V {
-  return hashTaggedValue[0]
+function untagValue<V>(tieBreakerTaggedValue: TieBreakerTaggedValue<V>): V {
+  return tieBreakerTaggedValue[0]
 }
 
-function getHash<V>(hashTaggedValue: HashTaggedValue<V>): Hash {
-  return hashTaggedValue[1]
+function getTieBreaker<V>(tieBreakerTaggedValue: TieBreakerTaggedValue<V>): TieBreaker {
+  return tieBreakerTaggedValue[1]
 }
