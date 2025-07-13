@@ -7,3 +7,4 @@ dist
 *.db
 .eslintcache
 packages/d2ts-benchmark/benchmark-results.png
+core
