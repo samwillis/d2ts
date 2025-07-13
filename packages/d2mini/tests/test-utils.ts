@@ -1,6 +1,9 @@
 import { MultiSet } from '../src/multiset.js'
 import { expect } from 'vitest'
 
+// Enable detailed logging of test results when LOG_RESULTS is set
+const LOG_RESULTS = process.env.LOG_RESULTS === 'true' || process.env.LOG_RESULTS === '1'
+
 /**
  * Materialize a result set from diff messages
  * Takes an array of messages and consolidates them into a final result set
@@ -165,7 +168,11 @@ export function assertResults<T>(
   const expectedMap = createExpectedResults(expected)
   const expectedSorted = mapToSortedArray(expectedMap)
   
-  console.log(`${testName}: ${actual.messageCount} messages, ${actual.sortedResults.length} final results`)
+  if (LOG_RESULTS) {
+    console.log(`${testName}: ${actual.messageCount} messages, ${actual.sortedResults.length} final results`)
+    console.log('  Messages:', actual.messages)
+    console.log('  Final results:', actual.sortedResults)
+  }
   
   // Check that materialized results match expected
   expect(actual.sortedResults).toEqual(expectedSorted)
@@ -194,7 +201,11 @@ export function assertKeyedResults<K, V>(
     return JSON.stringify(a[0]).localeCompare(JSON.stringify(b[0]))
   })
   
-  console.log(`${testName}: ${actual.messageCount} messages, ${actual.sortedResults.length} final results per key`)
+  if (LOG_RESULTS) {
+    console.log(`${testName}: ${actual.messageCount} messages, ${actual.sortedResults.length} final results per key`)
+    console.log('  Messages:', actual.messages)
+    console.log('  Final results:', actual.sortedResults)
+  }
   
   // Check that materialized results match expected
   expect(actual.sortedResults).toEqual(expectedSorted)
@@ -211,7 +222,9 @@ export function assertKeyedResults<K, V>(
   
   // Log key insights
   const affectedKeys = new Set(actual.messages.map(([[key, _value], _mult]) => key))
-  console.log(`${testName}: ✅ ${affectedKeys.size} keys affected, ${actual.sortedResults.length} final keys`)
+  if (LOG_RESULTS) {
+    console.log(`${testName}: ✅ ${affectedKeys.size} keys affected, ${actual.sortedResults.length} final keys`)
+  }
 }
 
 /**
@@ -243,5 +256,7 @@ export function assertOnlyKeysAffected<K, V>(
     }
   })
   
-  console.log(`${testName}: ✅ Only affected keys (${Array.from(actualKeys).join(', ')}) produced messages`)
+  if (LOG_RESULTS) {
+    console.log(`${testName}: ✅ Only expected keys affected: ${Array.from(actualKeys).join(', ')}`)
+  }
 }
