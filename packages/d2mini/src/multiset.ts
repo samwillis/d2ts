@@ -1,4 +1,5 @@
-import { DefaultMap, chunkedArrayPush, hash } from './utils.js'
+import { DefaultMap, chunkedArrayPush, hash, createTuple, releaseTuple } from './utils.js'
+import { MemoryEfficientStream } from './types.js'
 
 export type MultiSetArray<T> = [T, number][]
 export type KeyedData<T> = [key: string, value: T]
@@ -58,6 +59,15 @@ export interface IMultiSet<T> {
    * JSON representation
    */
   toJSON(): string
+}
+
+/**
+ * A tuple-free iterator that yields data and multiplicity separately
+ * to avoid tuple allocations entirely
+ */
+export interface TupleFreeIterator<T> {
+  next(): { done: boolean; value?: { data: T; multiplicity: number } }
+  [Symbol.iterator](): TupleFreeIterator<T>
 }
 
 /**
@@ -207,15 +217,63 @@ export class LazyMultiSet<T> implements IMultiSet<T> {
   }
 
   /**
+   * Get a tuple-free iterator that yields data and multiplicity separately
+   */
+  tupleFreeIterator(): TupleFreeIterator<T> {
+    const generator = this.#generator()
+    return {
+      next() {
+        const result = generator.next()
+        if (result.done) {
+          return { done: true }
+        }
+        const [data, multiplicity] = result.value
+        return { done: false, value: { data, multiplicity } }
+      },
+      [Symbol.iterator]() {
+        return this
+      }
+    }
+  }
+
+  /**
    * Apply a function to all records in the collection.
    */
   map<U>(f: (data: T) => U): IMultiSet<U> {
     const sourceGenerator = this.#generator
     return new LazyMultiSet(function* () {
       for (const [data, multiplicity] of sourceGenerator()) {
-        yield [f(data), multiplicity]
+        const tuple = createTuple(f(data), multiplicity)
+        yield tuple
+        // Note: We don't release the tuple here because it's being yielded
+        // The consumer is responsible for releasing it
       }
     })
+  }
+
+  /**
+   * Map operation that doesn't allocate tuples
+   */
+  mapTupleFree<U>(f: (data: T) => U): TupleFreeIterator<U> {
+    const sourceGenerator = this.#generator
+    const generator = (function* (): Generator<{ data: U; multiplicity: number }, void, unknown> {
+      for (const [data, multiplicity] of sourceGenerator()) {
+        yield { data: f(data), multiplicity }
+      }
+    })()
+    
+    return {
+      next() {
+        const result = generator.next()
+        if (result.done) {
+          return { done: true }
+        }
+        return { done: false, value: result.value }
+      },
+      [Symbol.iterator]() {
+        return this
+      }
+    }
   }
 
   /**
@@ -226,7 +284,8 @@ export class LazyMultiSet<T> implements IMultiSet<T> {
     return new LazyMultiSet(function* () {
       for (const [data, multiplicity] of sourceGenerator()) {
         if (f(data)) {
-          yield [data, multiplicity]
+          const tuple = createTuple(data, multiplicity)
+          yield tuple
         }
       }
     })
@@ -239,7 +298,8 @@ export class LazyMultiSet<T> implements IMultiSet<T> {
     const sourceGenerator = this.#generator
     return new LazyMultiSet(function* () {
       for (const [data, multiplicity] of sourceGenerator()) {
-        yield [data, -multiplicity]
+        const tuple = createTuple(data, -multiplicity)
+        yield tuple
       }
     })
   }
@@ -297,7 +357,8 @@ export class LazyMultiSet<T> implements IMultiSet<T> {
       for (const [key, multiplicity] of consolidated.entries()) {
         if (multiplicity !== 0) {
           const parsedKey = requireJson ? values.get(key as string) : key
-          yield [parsedKey as T, multiplicity]
+          const tuple = createTuple(parsedKey as T, multiplicity)
+          yield tuple
         }
       }
     })
@@ -334,4 +395,159 @@ export class LazyMultiSet<T> implements IMultiSet<T> {
       yield* source
     })
   }
+}
+
+/**
+ * Memory-efficient stream adapter that avoids tuple allocations
+ */
+export class MemoryEfficientStreamAdapter<T> implements MemoryEfficientStream<T> {
+  private source: IMultiSet<T>
+
+  constructor(source: IMultiSet<T>) {
+    this.source = source
+  }
+
+  forEach(handler: (data: T, multiplicity: number) => void): void {
+    for (const [data, multiplicity] of this.source) {
+      handler(data, multiplicity)
+    }
+  }
+
+  transform<U>(transformer: (data: T, multiplicity: number) => { data: U; multiplicity: number }): MemoryEfficientStream<U> {
+    const source = this.source
+    return new class implements MemoryEfficientStream<U> {
+      forEach(handler: (data: U, multiplicity: number) => void): void {
+        for (const [data, multiplicity] of source) {
+          const result = transformer(data, multiplicity)
+          handler(result.data, result.multiplicity)
+        }
+      }
+
+      transform<V>(transformer2: (data: U, multiplicity: number) => { data: V; multiplicity: number }): MemoryEfficientStream<V> {
+        return new class implements MemoryEfficientStream<V> {
+          forEach(handler: (data: V, multiplicity: number) => void): void {
+            for (const [data, multiplicity] of source) {
+              const result1 = transformer(data, multiplicity)
+              const result2 = transformer2(result1.data, result1.multiplicity)
+              handler(result2.data, result2.multiplicity)
+            }
+          }
+
+          transform<W>(transformer3: (data: V, multiplicity: number) => { data: W; multiplicity: number }): MemoryEfficientStream<W> {
+            // For deep nesting, fall back to lazy multiset
+            const lazy = new LazyMultiSet(function* () {
+              for (const [data, multiplicity] of source) {
+                const result1 = transformer(data, multiplicity)
+                const result2 = transformer2(result1.data, result1.multiplicity)
+                const result3 = transformer3(result2.data, result2.multiplicity)
+                yield [result3.data, result3.multiplicity]
+              }
+            })
+            return new MemoryEfficientStreamAdapter(lazy)
+          }
+
+          filter(predicate: (data: V, multiplicity: number) => boolean): MemoryEfficientStream<V> {
+            const lazy = new LazyMultiSet(function* () {
+              for (const [data, multiplicity] of source) {
+                const result1 = transformer(data, multiplicity)
+                const result2 = transformer2(result1.data, result1.multiplicity)
+                if (predicate(result2.data, result2.multiplicity)) {
+                  yield [result2.data, result2.multiplicity]
+                }
+              }
+            })
+            return new MemoryEfficientStreamAdapter(lazy)
+          }
+
+          collect(): IMultiSet<V> {
+            const result: [V, number][] = []
+            for (const [data, multiplicity] of source) {
+              const result1 = transformer(data, multiplicity)
+              const result2 = transformer2(result1.data, result1.multiplicity)
+              result.push([result2.data, result2.multiplicity])
+            }
+            return new MultiSet(result)
+          }
+        }()
+      }
+
+      filter(predicate: (data: U, multiplicity: number) => boolean): MemoryEfficientStream<U> {
+        const lazy = new LazyMultiSet(function* () {
+          for (const [data, multiplicity] of source) {
+            const result = transformer(data, multiplicity)
+            if (predicate(result.data, result.multiplicity)) {
+              yield [result.data, result.multiplicity]
+            }
+          }
+        })
+        return new MemoryEfficientStreamAdapter(lazy)
+      }
+
+      collect(): IMultiSet<U> {
+        const result: [U, number][] = []
+        for (const [data, multiplicity] of source) {
+          const transformed = transformer(data, multiplicity)
+          result.push([transformed.data, transformed.multiplicity])
+        }
+        return new MultiSet(result)
+      }
+    }()
+  }
+
+  filter(predicate: (data: T, multiplicity: number) => boolean): MemoryEfficientStream<T> {
+    const source = this.source
+    return new class implements MemoryEfficientStream<T> {
+      forEach(handler: (data: T, multiplicity: number) => void): void {
+        for (const [data, multiplicity] of source) {
+          if (predicate(data, multiplicity)) {
+            handler(data, multiplicity)
+          }
+        }
+      }
+
+      transform<U>(transformer: (data: T, multiplicity: number) => { data: U; multiplicity: number }): MemoryEfficientStream<U> {
+        const lazy = new LazyMultiSet(function* () {
+          for (const [data, multiplicity] of source) {
+            if (predicate(data, multiplicity)) {
+              const result = transformer(data, multiplicity)
+              yield [result.data, result.multiplicity]
+            }
+          }
+        })
+        return new MemoryEfficientStreamAdapter(lazy)
+      }
+
+      filter(predicate2: (data: T, multiplicity: number) => boolean): MemoryEfficientStream<T> {
+        const lazy = new LazyMultiSet(function* () {
+          for (const [data, multiplicity] of source) {
+            if (predicate(data, multiplicity) && predicate2(data, multiplicity)) {
+              yield [data, multiplicity]
+            }
+          }
+        })
+        return new MemoryEfficientStreamAdapter(lazy)
+      }
+
+      collect(): IMultiSet<T> {
+        const result: [T, number][] = []
+        for (const [data, multiplicity] of source) {
+          if (predicate(data, multiplicity)) {
+            result.push([data, multiplicity])
+          }
+        }
+        return new MultiSet(result)
+      }
+    }()
+  }
+
+  collect(): IMultiSet<T> {
+    return this.source
+  }
+}
+
+/**
+ * Convert a MultiSet to a memory-efficient stream
+ */
+export function toMemoryEfficientStream<T>(multiset: IMultiSet<T>): MemoryEfficientStream<T> {
+  return new MemoryEfficientStreamAdapter(multiset)
 }

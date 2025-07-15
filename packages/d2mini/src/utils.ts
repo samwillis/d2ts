@@ -111,3 +111,70 @@ export function binarySearch<T>(
   }
   return low
 }
+
+/**
+ * A pool for reusing tuple objects to reduce heap allocations
+ */
+class TuplePool<T, U> {
+  private pool: [T, U][] = []
+  private maxPoolSize: number
+
+  constructor(maxPoolSize = 1000) {
+    this.maxPoolSize = maxPoolSize
+  }
+
+  acquire(): [T, U] {
+    return this.pool.pop() || [undefined as T, undefined as U]
+  }
+
+  release(tuple: [T, U]): void {
+    if (this.pool.length < this.maxPoolSize) {
+      // Clear the tuple contents before returning to pool
+      tuple[0] = undefined as T
+      tuple[1] = undefined as U
+      this.pool.push(tuple)
+    }
+  }
+
+  clear(): void {
+    this.pool.length = 0
+  }
+}
+
+// Global tuple pools for common patterns
+const dataMultiplicityPool = new TuplePool<any, number>()
+const keyValuePool = new TuplePool<string, any>()
+
+/**
+ * Creates a tuple from the pool to avoid heap allocation
+ */
+export function createTuple<T, U>(first: T, second: U): [T, U] {
+  const tuple = dataMultiplicityPool.acquire()
+  tuple[0] = first
+  tuple[1] = second
+  return tuple
+}
+
+/**
+ * Returns a tuple to the pool for reuse
+ */
+export function releaseTuple<T, U>(tuple: [T, U]): void {
+  dataMultiplicityPool.release(tuple)
+}
+
+/**
+ * Creates a key-value tuple from the pool
+ */
+export function createKeyValueTuple<K, V>(key: K, value: V): [K, V] {
+  const tuple = keyValuePool.acquire() as [K, V]
+  tuple[0] = key
+  tuple[1] = value
+  return tuple
+}
+
+/**
+ * Returns a key-value tuple to the pool
+ */
+export function releaseKeyValueTuple<K, V>(tuple: [K, V]): void {
+  keyValuePool.release(tuple as any)
+}

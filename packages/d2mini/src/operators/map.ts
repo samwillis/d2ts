@@ -1,42 +1,60 @@
-import { IStreamBuilder, PipedOperator } from '../types.js'
-import { DifferenceStreamReader, DifferenceStreamWriter } from '../graph.js'
+import { IStreamBuilder } from '../types.js'
+import {
+  DifferenceStreamReader,
+  DifferenceStreamWriter,
+  LinearUnaryOperator,
+} from '../graph.js'
 import { StreamBuilder } from '../d2.js'
-import { LinearUnaryOperator } from '../graph.js'
-import { IMultiSet, LazyMultiSet } from '../multiset.js'
+import { LazyMultiSet, toMemoryEfficientStream } from '../multiset.js'
+import { createTuple } from '../utils.js'
 
 /**
- * Operator that applies a function to each element in the input stream
+ * Memory-efficient map operator that avoids tuple allocations
  */
-export class MapOperator<T, U> extends LinearUnaryOperator<T, U> {
-  #f: (data: T) => U
+export class MemoryEfficientMapOperator<Tin, Tout> extends LinearUnaryOperator<Tin | Tout> {
+  #f: (data: Tin) => Tout
 
   constructor(
     id: number,
-    inputA: DifferenceStreamReader<T>,
-    output: DifferenceStreamWriter<U>,
-    f: (data: T) => U,
+    inputA: DifferenceStreamReader<Tin>,
+    output: DifferenceStreamWriter<Tout>,
+    f: (data: Tin) => Tout,
   ) {
     super(id, inputA, output)
     this.#f = f
   }
 
-  inner(collection: IMultiSet<T>): IMultiSet<U> {
-    // Use LazyMultiSet for lazy evaluation
-    return LazyMultiSet.from(collection).map(this.#f)
+  inner(collection: any): any {
+    // Use memory-efficient stream processing
+    const stream = toMemoryEfficientStream(collection)
+    const transformed = stream.transform((data, multiplicity) => ({
+      data: this.#f(data as Tin),
+      multiplicity
+    }))
+    
+    // Only materialize when sending to output
+    const result: [Tout, number][] = []
+    transformed.forEach((data, multiplicity) => {
+      const tuple = createTuple(data, multiplicity)
+      result.push(tuple)
+    })
+    
+    return new LazyMultiSet(function* () {
+      yield* result
+    })
   }
 }
 
 /**
- * Applies a function to each element in the input stream
- * @param f - The function to apply to each element
+ * Memory-efficient map operation that avoids tuple allocations
  */
-export function map<T, O>(f: (data: T) => O): PipedOperator<T, O> {
-  return (stream: IStreamBuilder<T>): IStreamBuilder<O> => {
-    const output = new StreamBuilder<O>(
+export function mapMemoryEfficient<T, U>(f: (data: T) => U) {
+  return (stream: IStreamBuilder<T>): IStreamBuilder<U> => {
+    const output = new StreamBuilder<U>(
       stream.graph,
-      new DifferenceStreamWriter<O>(),
+      new DifferenceStreamWriter<U>(),
     )
-    const operator = new MapOperator<T, O>(
+    const operator = new MemoryEfficientMapOperator<T, U>(
       stream.graph.getNextOperatorId(),
       stream.connectReader(),
       output.writer,

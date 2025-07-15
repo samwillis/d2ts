@@ -7,7 +7,7 @@ import {
 import { StreamBuilder } from '../d2.js'
 import { LazyMultiSet } from '../multiset.js'
 import { Index } from '../indexes.js'
-import { hash } from '../utils.js'
+import { hash, createTuple } from '../utils.js'
 
 /**
  * Base operator for reduction operations (version-free)
@@ -136,7 +136,8 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
         for (const [valueKey, { value, multiplicity }] of oldOutputMap) {
           const newEntry = newOutputMap.get(valueKey)
           if (!newEntry) {
-            yield [[key, value], -multiplicity] as [[K, V2], number]
+            const tuple = createTuple([key, value], -multiplicity)
+            yield tuple as [[K, V2], number]
           }
         }
 
@@ -145,7 +146,8 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
           const oldEntry = oldOutputMap.get(valueKey)
           if (!oldEntry) {
             if (multiplicity !== 0) {
-              yield [[key, value], multiplicity] as [[K, V2], number]
+              const tuple = createTuple([key, value], multiplicity)
+              yield tuple as [[K, V2], number]
             }
           }
         }
@@ -156,7 +158,8 @@ export class ReduceOperator<K, V1, V2> extends UnaryOperator<[K, V1], [K, V2]> {
           const oldEntry = oldOutputMap.get(valueKey)
           const delta = newEntry!.multiplicity - oldEntry!.multiplicity
           if (delta !== 0) {
-            yield [[key, newEntry!.value], delta] as [[K, V2], number]
+            const tuple = createTuple([key, newEntry!.value], delta)
+            yield tuple as [[K, V2], number]
           }
         }
       }

@@ -83,3 +83,38 @@ export interface IStreamBuilder<T> {
 export type PipedOperator<I, O> = (
   stream: IStreamBuilder<I>,
 ) => IStreamBuilder<O>
+
+/**
+ * Memory-efficient stream interface that avoids tuple allocations
+ */
+export interface MemoryEfficientStream<T> {
+  /**
+   * Process each item with data and multiplicity separately
+   */
+  forEach(handler: (data: T, multiplicity: number) => void): void
+  
+  /**
+   * Transform data without allocating tuples
+   */
+  transform<U>(transformer: (data: T, multiplicity: number) => { data: U; multiplicity: number }): MemoryEfficientStream<U>
+  
+  /**
+   * Filter data without allocating tuples
+   */
+  filter(predicate: (data: T, multiplicity: number) => boolean): MemoryEfficientStream<T>
+  
+  /**
+   * Collect results into a MultiSet (only when needed)
+   */
+  collect(): IMultiSet<T>
+}
+
+/**
+ * Memory-efficient operator that processes data without tuple allocations
+ */
+export interface MemoryEfficientOperator<Tin, Tout> {
+  process(
+    input: MemoryEfficientStream<Tin>,
+    output: (data: Tout, multiplicity: number) => void
+  ): void
+}
